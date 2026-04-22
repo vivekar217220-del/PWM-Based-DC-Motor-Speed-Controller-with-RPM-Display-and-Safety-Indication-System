@@ -1,0 +1,284 @@
+//Code :- (with It's Understanding with it's Comments 
+
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ============================================================
+   LCD DEFINITIONS
+   RS -> PD0 | E -> PD1 | D4-D7 -> PD4-PD7
+   ============================================================ */
+#define LCD_RS_PORT  PORTD
+#define LCD_RS_DDR   DDRD
+#define LCD_RS_PIN   PD0
+
+#define LCD_E_PORT   PORTD
+#define LCD_E_DDR    DDRD
+#define LCD_E_PIN    PD1
+
+#define LCD_DATA_DDR   DDRD
+#define LCD_DATA_PORT  PORTD
+
+/* ============================================================
+   BUZZER — PE3
+   ============================================================ */
+#define BUZZER_DDR   DDRE
+#define BUZZER_PORT  PORTE
+#define BUZZER_PIN   PE3
+
+#define BUZZER_MAX_THRESHOLD  240   /* ~282+ RPM = buzzer ON */
+
+/* ============================================================
+   LED SPEED ZONES  (PWM values, scale 0-255 = 0-300 RPM)
+   Green  : 0  RPM – 30  RPM  ?  PWM  0 – 25
+   Yellow : 31 RPM – 80  RPM  ?  PWM 26 – 68
+   Red    : 81 RPM – 300 RPM  ?  PWM 69 – 255
+   Formula: PWM_threshold = RPM_threshold x 255 / 300
+   ============================================================ */
+#define LED_GREEN_MAX    25    /* PWM for 30  RPM */
+#define LED_YELLOW_MAX   68    /* PWM for 80  RPM */
+/* Red = anything above LED_YELLOW_MAX */
+
+/* ============================================================
+   LCD LOW-LEVEL HELPERS
+   ============================================================ */
+static void lcd_pulse_enable(void)
+{
+    LCD_E_PORT |=  (1 << LCD_E_PIN);
+    _delay_us(1);
+    LCD_E_PORT &= ~(1 << LCD_E_PIN);
+    _delay_us(100);
+}
+
+static void lcd_write_nibble(uint8_t nibble)
+{
+    LCD_DATA_PORT &= ~((1<<PD7)|(1<<PD6)|(1<<PD5)|(1<<PD4));
+
+    if (nibble & 0x08) LCD_DATA_PORT |= (1<<PD7);
+    if (nibble & 0x04) LCD_DATA_PORT |= (1<<PD6);
+    if (nibble & 0x02) LCD_DATA_PORT |= (1<<PD5);
+    if (nibble & 0x01) LCD_DATA_PORT |= (1<<PD4);
+
+    lcd_pulse_enable();
+}
+
+static void lcd_send(uint8_t byte, uint8_t is_data)
+{
+    if (is_data)
+        LCD_RS_PORT |=  (1 << LCD_RS_PIN);
+    else
+        LCD_RS_PORT &= ~(1 << LCD_RS_PIN);
+
+    lcd_write_nibble(byte >> 4);
+    lcd_write_nibble(byte & 0x0F);
+    _delay_us(50);
+}
+
+#define lcd_cmd(c)  lcd_send(c, 0)
+#define lcd_data(c) lcd_send(c, 1)
+
+/* ============================================================
+   LCD HIGH-LEVEL API
+   ============================================================ */
+void lcd_init(void)
+{
+    LCD_RS_DDR   |= (1 << LCD_RS_PIN);
+    LCD_E_DDR    |= (1 << LCD_E_PIN);
+    LCD_DATA_DDR |= (1<<PD7)|(1<<PD6)|(1<<PD5)|(1<<PD4);
+
+    _delay_ms(50);
+    LCD_RS_PORT &= ~(1 << LCD_RS_PIN);
+
+    lcd_write_nibble(0x03); _delay_ms(5);
+    lcd_write_nibble(0x03); _delay_us(150);
+    lcd_write_nibble(0x03); _delay_us(150);
+    lcd_write_nibble(0x02); _delay_us(150);
+
+    lcd_cmd(0x28);
+    lcd_cmd(0x0C);
+    lcd_cmd(0x06);
+    lcd_cmd(0x01);
+    _delay_ms(2);
+}
+
+void lcd_set_cursor(uint8_t col, uint8_t row)
+{
+    uint8_t addr = (row == 0) ? (0x80 + col) : (0xC0 + col);
+    lcd_cmd(addr);
+}
+
+void lcd_print(const char *str)
+{
+    while (*str)
+        lcd_data((uint8_t)(*str++));
+}
+
+void lcd_clear(void)
+{
+    lcd_cmd(0x01);
+    _delay_ms(2);
+}
+
+/* ============================================================
+   ADC — Potentiometer on PF0 (channel 0)
+   ============================================================ */
+void adc_init(void)
+{
+    ADMUX  = (1 << REFS0);
+    ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+}
+
+uint16_t adc_read(uint8_t channel)
+{
+    ADMUX  = (ADMUX & 0xF8) | (channel & 0x07);
+    ADCSRA |= (1 << ADSC);
+    while (ADCSRA & (1 << ADSC));
+    return ADC;
+}
+
+/* ============================================================
+   PWM — Timer1 OC1B on PB6 (ENA of L298)
+   ============================================================ */
+void pwm_init(void)
+{
+    DDRB |= (1 << PB6);
+    TCCR1A = (1 << COM1B1) | (1 << WGM10);
+    TCCR1B = (1 << WGM12)  | (1 << CS11) | (1 << CS10);
+    OCR1B  = 0;
+}
+
+void pwm_set(uint8_t duty)
+{
+    OCR1B = duty;
+}
+
+/* ============================================================
+   MOTOR DIRECTION — IN1=PB4, IN2=PB5
+   ============================================================ */
+void motor_init(void)
+{
+    DDRB |= (1 << PB4) | (1 << PB5);
+    PORTB |=  (1 << PB4);
+    PORTB &= ~(1 << PB5);
+}
+
+/* ============================================================
+   LED PINS — Red=PB0, Green=PB1, Yellow=PB2
+   Traditional car speedometer zones:
+     Green  ?  0  to 30  RPM  (safe / slow)
+     Yellow ?  31 to 80  RPM  (caution / medium)
+     Red    ?  81 to 300 RPM  (danger / fast)
+   ============================================================ */
+void led_init(void)
+{
+    DDRB |= (1 << PB0) | (1 << PB1) | (1 << PB2);
+    PORTB &= ~((1 << PB0) | (1 << PB1) | (1 << PB2));
+}
+
+void led_set_speed(uint8_t pwm)
+{
+    /* Turn all LEDs off first */
+    PORTB &= ~((1 << PB0) | (1 << PB1) | (1 << PB2));
+
+    if (pwm <= LED_GREEN_MAX) {
+        PORTB |= (1 << PB1);        /* GREEN  — 0 to 30 RPM  */
+    } else if (pwm <= LED_YELLOW_MAX) {
+        PORTB |= (1 << PB2);        /* YELLOW — 31 to 80 RPM */
+    } else {
+        PORTB |= (1 << PB0);        /* RED    — 81+ RPM      */
+    }
+}
+
+/* ============================================================
+   BUZZER — PE3
+   Turns ON when RPM reaches near maximum (pwm >= 240)
+   ============================================================ */
+void buzzer_init(void)
+{
+    BUZZER_DDR  |= (1 << BUZZER_PIN);
+    BUZZER_PORT &= ~(1 << BUZZER_PIN);
+}
+
+void buzzer_update(uint8_t pwm)
+{
+    if (pwm >= BUZZER_MAX_THRESHOLD)
+        BUZZER_PORT |=  (1 << BUZZER_PIN);   /* ON  */
+    else
+        BUZZER_PORT &= ~(1 << BUZZER_PIN);   /* OFF */
+}
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+void int_to_str_padded(int val, char *buf, uint8_t width)
+{
+    char    tmp[8];
+    uint8_t len;
+    uint8_t i;
+
+    itoa(val, tmp, 10);
+    len = (uint8_t)strlen(tmp);
+    strcpy(buf, tmp);
+
+    for (i = len; i < width; i++)
+        buf[i] = ' ';
+
+    buf[width] = '\0';
+}
+
+/* ============================================================
+   MAIN
+   ============================================================ */
+int main(void)
+{
+    uint16_t pot;
+    uint8_t  pwm;
+    uint16_t rpm;
+    char     str_buf[8];
+
+    adc_init();
+    pwm_init();
+    motor_init();
+    led_init();
+    buzzer_init();
+    lcd_init();
+
+    /* Splash screen */
+    lcd_set_cursor(1, 0);
+    lcd_print("RPM Controller");
+    _delay_ms(2000);
+    lcd_clear();
+
+    while (1)
+    {
+        pot = adc_read(0);
+        pwm = (uint8_t)((pot * 255UL) / 1023UL);
+        rpm = (uint16_t)((pwm * 300UL) / 255UL);
+
+        pwm_set(pwm);
+        led_set_speed(pwm);
+        buzzer_update(pwm);
+
+        /* Row 0: Speed (PWM value) */
+        lcd_set_cursor(0, 0);
+        lcd_print("Speed: ");
+        int_to_str_padded(pwm, str_buf, 5);
+        lcd_print(str_buf);
+
+        /* Row 1: RPM value or MAX warning */
+        lcd_set_cursor(0, 1);
+        if (pwm >= BUZZER_MAX_THRESHOLD) {
+            lcd_print("RPM: MAX!   ");
+        } else {
+            lcd_print("RPM:   ");
+            int_to_str_padded(rpm, str_buf, 5);
+            lcd_print(str_buf);
+        }
+
+        _delay_ms(300);
+    }
+
+    return 0;
+}
