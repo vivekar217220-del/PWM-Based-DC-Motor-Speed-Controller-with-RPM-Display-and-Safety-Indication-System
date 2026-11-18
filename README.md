@@ -8,7 +8,7 @@ An ATmega2560 motor control demo in Proteus. A potentiometer sets the PWM duty c
 
 Potentiometer → ADC0 → Timer1 PWM → L298N → DC motor
 
-The display scales the PWM command to a nominal 0–300 RPM range using integer arithmetic. This is an open-loop estimate derived from the command.
+The display scales the PWM command to a nominal 0–300 RPM range using integer arithmetic. This is an open-loop estimate derived from the command. At PWM 240 or higher, the LCD displays `RPM: MAX!` and the buzzer sounds.
 
 | PWM command | Indication |
 | --- | --- |
@@ -17,7 +17,7 @@ The display scales the PWM command to a nominal 0–300 RPM range using integer 
 | 69–239 | Red LED |
 | 240–255 | Red LED and buzzer |
 
-## 🧰 Components Required
+## Components
 
 - ATmega2560 (Arduino Mega 2560)
 - L298N Motor Driver Module
@@ -34,7 +34,7 @@ The display scales the PWM command to a nominal 0–300 RPM range using integer 
 
 ---
 
-## 🔌 Pin Connections
+## Pin connections
 
 ### LCD (16x2)
 | LCD Pin | Connect To           |
