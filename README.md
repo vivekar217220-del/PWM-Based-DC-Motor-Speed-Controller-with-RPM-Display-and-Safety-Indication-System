@@ -1,105 +1,65 @@
-# PWM-Based-DC-Motor-Speed-Controller-with-RPM-Display-and-Safety-Indication-System
+# RevAlert | ATmega2560 PWM Motor Controller
 
+RevAlert demonstrates an adjustable DC motor command, a 16×2 LCD speed estimate, and visual and audible indications in Proteus. The AVR firmware uses ADC channel 0 for input, Timer1 for PWM, and digital outputs for the LCD, indicators, and buzzer.
 
-## 🎯 Project Overview
+[Watch the Proteus demonstration](<Screen Recording 2026-04-22 190347.mp4>) · [Read the AVR C firmware](Code)
 
-RevAlert simulates a real-world industrial motor speed controller.
-Turn a potentiometer → motor speeds up → LCD shows RPM live → 
-LEDs glow by zone → buzzer warns at max speed.
+## Signal flow
 
----
+```text
+10 kΩ potentiometer ── ADC0 ── Scaled PWM command ── Timer1 OC1B ── L298N ── DC motor
+                                      ├── 16×2 LCD
+                                      └── Speed LEDs and buzzer
+```
 
-## 🧰 Components Required
+1. **Read the requested speed.** The ATmega2560 reads the voltage from the control potentiometer on PF0. The 10-bit ADC produces values from 0 to 1023.
+2. **Scale the input.** The firmware calculates `PWM = floor(ADC × 255 / 1023)`. It writes the resulting command to `OCR1B`. Timer1 runs in 8-bit fast PWM mode and drives the motor enable through OC1B on PB6.
+3. **Drive the motor.** The L298N receives the PWM signal at ENA. The firmware keeps IN1 high and IN2 low for one direction of rotation.
+4. **Update the interface.** The first LCD row displays the PWM command. Below the alert threshold, the second row displays `floor(PWM × 300 / 255)` as a nominal RPM estimate. At a command of 240 or higher it shows `RPM: MAX!`.
+5. **Update indications.** The firmware chooses one LED from the command range and activates the buzzer only in the top range. The main loop delays 300 ms after updating the outputs.
 
-- ATmega2560 (Arduino Mega 2560)
-- L298N Motor Driver Module
-- DC Motor (5V or 12V)
-- 16x2 LCD Display (LM016L)
-- Potentiometer 10kΩ × 2
-- LED Red × 1
-- LED Green × 1
-- LED Yellow × 1
-- Active Buzzer 5V × 1
-- 220Ω Resistors × 3
-- Jumper Wires
-- Breadboard
+## Command ranges
 
----
+| PWM command | Active LED | Buzzer | LCD second row |
+| --- | --- | --- | --- |
+| 0–25 | Green | Off | Estimated RPM |
+| 26–68 | Yellow | Off | Estimated RPM |
+| 69–239 | Red | Off | Estimated RPM |
+| 240–255 | Red | On | `RPM: MAX!` |
 
-## 🔌 Pin Connections
+The thresholds use the PWM command. The firmware computes a nominal speed estimate from a fixed 300 RPM scale and contains no encoder or tachometer input. Motor speed under load can differ from the displayed value. The buzzer and LEDs demonstrate threshold logic for this simulation.
 
-### LCD (16x2)
-| LCD Pin | Connect To           |
-|---------|----------------------|
-| VSS     | GND                  |
-| VDD     | +5V                  |
-| VEE     | Potentiometer middle |
-| RS      | PD0                  |
-| RW      | GND                  |
-| E       | PD1                  |
-| D4      | PD4                  |
-| D5      | PD5                  |
-| D6      | PD6                  |
-| D7      | PD7                  |
+## Components and pin mapping
 
-### L298N Motor Driver
-| L298N Pin | Connect To |
-|-----------|------------|
-| VS        | +5V        |
-| VCC       | +5V        |
-| IN1       | PB4        |
-| IN2       | PB5        |
-| ENA       | PB6 (PWM)  |
-| OUT1/OUT2 | DC Motor   |
-| GND       | GND        |
+The setup uses an ATmega2560, an L298N motor driver, a DC motor, a 16×2 LCD (LM016L in the simulation), a 5 V active buzzer, three LEDs with 220 Ω series resistors, and two 10 kΩ potentiometers for speed input and LCD contrast. The table uses AVR port labels.
 
-### Other Components
-| Component     | Pin           |
-|---------------|---------------|
-| Potentiometer | PF0 (ADC)     |
-| LED Green     | PB1           |
-| LED Yellow    | PB2           |
-| LED Red       | PB0           |
-| Buzzer (+)    | PE3           |
-| Buzzer (-)    | GND           |
+| Module | Signal | Connection |
+| --- | --- | --- |
+| Speed potentiometer | Wiper | PF0 / ADC0 |
+| L298N | IN1 / IN2 | PB4 / PB5 |
+| L298N | ENA | PB6 / OC1B |
+| L298N | OUT1 / OUT2 | DC motor terminals |
+| L298N | VS / VCC / GND | +5 V / +5 V / common GND in the documented simulation |
+| 16×2 LCD | RS / E | PD0 / PD1 |
+| 16×2 LCD | D4–D7 | PD4–PD7 |
+| 16×2 LCD | VSS / VDD / RW | GND / +5 V / GND |
+| 16×2 LCD | Contrast / VEE | Wiper of the contrast potentiometer |
+| LEDs | Green / yellow / red | PB1 / PB2 / PB0 |
+| Buzzer | Control / return | PE3 / GND |
 
----
+## Recreate or verify the simulation
 
-## 🟢🟡🔴 Speed Zones
+The repository contains the AVR C source and a recording. To recreate the circuit in Proteus, build the source with AVR-GCC for the ATmega2560, set the build clock to match the simulator, and load the compiled firmware into the MCU model. Wire the simulation using the port labels above.
 
-| Zone    | RPM Range | LED    |
-|---------|-----------|--------|
-| Safe    | 0 – 30    | Green  |
-| Caution | 31 – 80   | Yellow |
-| Danger  | 81 – 300  | Red    |
-| MAX     | 282+      | Red + Buzzer ON |
+| Check | Expected observation |
+| --- | --- |
+| Power on | The LCD shows the startup message, then the current command and estimate. |
+| Sweep the control potentiometer | The displayed PWM command increases from the low end toward 255. The driver enable signal changes duty cycle. |
+| Cross PWM 25 → 26 and 68 → 69 | The LED changes from green to yellow, then from yellow to red. |
+| Cross PWM 239 → 240 | The red LED stays on, the buzzer turns on, and the LCD changes to `RPM: MAX!`. |
+| Return below PWM 240 | The buzzer turns off and the RPM estimate returns. |
 
----
+## Repository contents
 
-## ⚙️ How It Works
-
-1. Potentiometer rotated → ADC reads value (0–1023) on PF0
-2. ADC mapped to PWM duty cycle (0–255) on Timer1 OC1B → PB6
-3. L298N drives DC motor speed via ENA pin
-4. RPM = PWM × 300 / 255
-5. LCD displays Speed and RPM live
-6. LED lights up based on speed zone
-7. Buzzer turns ON when PWM ≥ 240 (~282+ RPM)
-
----
-
-## 💻 Tools Used
-
-- Language : C (AVR-GCC)
-- Simulation : Proteus 8
-- Board : ATmega2560 (Arduino Mega 2560)
-
-
----
-
-## 👤 Author
-
-- Name    : Chaudhary Vivek Rajeshbhai 
-- College : Pandit Deendayal Energy University 
-- Branch  : ICT
-- Year    : 2026
+- [Code](Code) contains the ADC and Timer1 configuration, four-bit LCD routines, LED and buzzer logic, and the control loop.
+- [Simulation recording](<Screen Recording 2026-04-22 190347.mp4>) captures the Proteus demonstration.
