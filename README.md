@@ -1,13 +1,21 @@
-# PWM-Based-DC-Motor-Speed-Controller-with-RPM-Display-and-Safety-Indication-System
+# RevAlert · PWM DC Motor Speed Controller
 
+An ATmega2560 motor control demo in Proteus. A potentiometer sets the PWM duty cycle, a 16×2 LCD displays an estimated speed, and LEDs and a buzzer show threshold crossings.
 
-## 🎯 Project Overview
+[Watch the simulation](<Screen Recording 2026-04-22 190347.mp4>) · [Read the AVR C source](Code)
 
-RevAlert simulates a real-world industrial motor speed controller.
-Turn a potentiometer → motor speeds up → LCD shows RPM live → 
-LEDs glow by zone → buzzer warns at max speed.
+## How it works
 
----
+Potentiometer → ADC0 → Timer1 PWM → L298N → DC motor
+
+The display scales the PWM command to a nominal 0–300 RPM range using integer arithmetic. This is an open-loop estimate derived from the command.
+
+| PWM command | Indication |
+| --- | --- |
+| 0–25 | Green LED |
+| 26–68 | Yellow LED |
+| 69–239 | Red LED |
+| 240–255 | Red LED and buzzer |
 
 ## 🧰 Components Required
 
@@ -65,41 +73,6 @@ LEDs glow by zone → buzzer warns at max speed.
 
 ---
 
-## 🟢🟡🔴 Speed Zones
+## Development tools
 
-| Zone    | RPM Range | LED    |
-|---------|-----------|--------|
-| Safe    | 0 – 30    | Green  |
-| Caution | 31 – 80   | Yellow |
-| Danger  | 81 – 300  | Red    |
-| MAX     | 282+      | Red + Buzzer ON |
-
----
-
-## ⚙️ How It Works
-
-1. Potentiometer rotated → ADC reads value (0–1023) on PF0
-2. ADC mapped to PWM duty cycle (0–255) on Timer1 OC1B → PB6
-3. L298N drives DC motor speed via ENA pin
-4. RPM = PWM × 300 / 255
-5. LCD displays Speed and RPM live
-6. LED lights up based on speed zone
-7. Buzzer turns ON when PWM ≥ 240 (~282+ RPM)
-
----
-
-## 💻 Tools Used
-
-- Language : C (AVR-GCC)
-- Simulation : Proteus 8
-- Board : ATmega2560 (Arduino Mega 2560)
-
-
----
-
-## 👤 Author
-
-- Name    : Chaudhary Vivek Rajeshbhai 
-- College : Pandit Deendayal Energy University 
-- Branch  : ICT
-- Year    : 2026
+AVR-GCC · ATmega2560 · Proteus 8
